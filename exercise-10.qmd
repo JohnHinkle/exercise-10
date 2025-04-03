@@ -1,0 +1,178 @@
+---
+title: "exercise-10"
+author: "John Hinkle"
+format: html
+editor: visual
+self-contained: true
+---
+
+## Preliminaries
+
+```{r}
+library(tidyverse) # tidyverse suite of packages
+library(ggplot2) # for plotting
+library(cowplot) # for making multi-panel figures
+library(skimr) # for exploratory data analysis
+
+d <- read_csv("https://raw.githubusercontent.com/difiore/ada-datasets/refs/heads/main/AVONETdataset1.csv")
+
+d <- d |> select(Species1, Family1, Order1, Beak.Length_Culmen, Beak.Width, Beak.Depth, Tarsus.Length, Wing.Length, Tail.Length, Mass, Habitat, Migration, Trophic.Level, Trophic.Niche, Min.Latitude, Max.Latitude, Centroid.Latitude, Primary.Lifestyle, Range.Size)
+
+skim(d)
+```
+
+# Challenge 1
+
+## Step 1: Boxplots of log(**Mass**) in relation to **trophic level and migration behavior type**
+
+```{r}
+d <- d |> 
+  mutate(Migration = as.factor(Migration)) |> 
+  mutate(logMass = log(Mass))
+
+p1 <- ggplot(data = d |> drop_na(Trophic.Level), aes(x = Trophic.Level, y = logMass)) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.1, color = "dodgerblue4")
+
+p2 <- ggplot(data = d |> drop_na(Migration), 
+       aes(x = Migration, y = logMass)) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.1, color = "dodgerblue4")
+
+plot_grid(p1, p2, nrow = 2)
+```
+
+## Step 2: Linear models of log(**Mass**) in relation to **trophic level and migration behavior type**
+
+```{r}
+# Linear models
+m1 <- lm(logMass ~ Trophic.Level, data = d)
+summary(m1) # body mass is not significantly different between carnivores and herbivores
+```
+
+```{r}
+m2 <- lm(logMass ~ Migration, data = d)
+summary(m2)
+```
+
+## Step 3: Perform post-hoc Tukey Honest Significant Differences test
+
+```{r}
+m1aov <- aov(logMass ~ Migration, data = d)
+(posthoc <- TukeyHSD(m1aov, which = "Migration", conf.level = 0.95))
+```
+
+## Step 4: Permutation
+
+```{r}
+library(infer)
+
+original.F <- aov(logMass ~ Trophic.Level, data = d) |>
+  broom::tidy() |>
+  filter(term == "Trophic.Level")
+
+permuted.F <- d |>
+  specify(logMass ~ Trophic.Level) |>
+  hypothesize(null = "independence") |>
+  generate(reps = 1000, type = "permute") |>
+  calculate(stat = "F")
+```
+
+# Challenge 2
+
+## Step 1: Create relative beak length and relative tarsus length variables
+
+```{r}
+m3 <- lm(log(Beak.Length_Culmen) ~ logMass, data = d)
+m4 <- lm(log(Tarsus.Length) ~ logMass, data = d)
+
+d <- d |> mutate(RelativeBeakLength = m3$residuals) |> 
+  mutate(RelativeTarsusLength = m4$residuals)
+```
+
+## Step 2: Box plots of I) Relative beak length variable in relation to trophic niche and II) Relative tarsus length variable in relation to primary lifestyle
+
+```{r}
+box1 <- ggplot(data = d, aes(x = Trophic.Niche, y = RelativeBeakLength)) +
+  geom_boxplot(color = "dodgerblue4") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+box2 <- ggplot(data = d, aes(x = Primary.Lifestyle, y = RelativeTarsusLength)) +
+  geom_boxplot(color = "dodgerblue4") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+plot_grid(box1, box2, nrow = 1, labels = c("I)", "II)"))
+```
+
+## Step 3: Association between geographic range size and migration behavior type
+
+```{r}
+migration <- d |> 
+  drop_na(Migration) |>
+  mutate(logRS = log(Range.Size))
+
+hist(migration$Range.Size)
+hist(migration$logRS)
+
+m5 <- lm(logRS ~ Migration, data = migration)
+summary(m5)
+
+aov <- aov(logRS ~ Migration, data = migration)
+summary(aov)
+```
+
+## Step 4: Analyze Infraorder *Passeriformes* (aka songbirds)
+
+```{r}
+songbirds <- d |> filter(Order1 == "Passeriformes")
+
+box1 <- ggplot(data = songbirds, aes(x = Primary.Lifestyle, y = RelativeBeakLength)) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.05) +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+box2 <- ggplot(data = songbirds, aes(x = Primary.Lifestyle, y = RelativeTarsusLength)) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.05) +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+plot_grid(box1, box2, nrow = 1)
+
+# Linear model for relative beak length vs. primary lifestyle
+m6 <- lm(RelativeBeakLength ~ Primary.Lifestyle, data = songbirds)
+summary(m6)
+
+# Linear model for relative tarsus length vs. primary lifestyle
+m7 <- lm(RelativeTarsusLength ~ Primary.Lifestyle, data = songbirds)
+summary(m7)
+```
+
+## Step 5: Two-way model
+
+```{r}
+# Two-way model
+m8 <- lm(RelativeBeakLength ~ Primary.Lifestyle + Trophic.Level, data = songbirds)
+summary(m8)
+```
+
+## Step 6: Two-way model plus an interaction term (Primary.Lifestyle:Trophic.Level)
+
+```{r}
+m9 <- lm(RelativeBeakLength ~ Primary.Lifestyle + Trophic.Level + Primary.Lifestyle:Trophic.Level, data = songbirds)
+summary(m9)
+
+# Another way to do this would be: 
+# m9 <- lm(RelativeBeakLength ~ Primary.Lifestyle + Primary.Lifestyle*Trophic.Level, data = songbirds)
+```
+
+## Step 7: Interaction plot
+
+```{r}
+
+```
+
+## Step 8:
+
+```{r}
+
+```
