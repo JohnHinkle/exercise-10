@@ -16,6 +16,7 @@ library(skimr) # for exploratory data analysis
 
 d <- read_csv("https://raw.githubusercontent.com/difiore/ada-datasets/refs/heads/main/AVONETdataset1.csv")
 
+# winnow dataset to the specified variables
 d <- d |> select(Species1, Family1, Order1, Beak.Length_Culmen, Beak.Width, Beak.Depth, Tarsus.Length, Wing.Length, Tail.Length, Mass, Habitat, Migration, Trophic.Level, Trophic.Niche, Min.Latitude, Max.Latitude, Centroid.Latitude, Primary.Lifestyle, Range.Size)
 
 skim(d)
@@ -28,7 +29,8 @@ skim(d)
 ```{r}
 d <- d |> 
   mutate(Migration = as.factor(Migration)) |> 
-  mutate(logMass = log(Mass))
+  mutate(logMass = log(Mass)) |>
+  mutate(Trophic.Level = as.factor(Trophic.Level))
 
 p1 <- ggplot(data = d |> drop_na(Trophic.Level), aes(x = Trophic.Level, y = logMass)) +
   geom_boxplot() +
@@ -39,23 +41,67 @@ p2 <- ggplot(data = d |> drop_na(Migration),
   geom_boxplot() +
   geom_jitter(alpha = 0.1, color = "dodgerblue4")
 
-plot_grid(p1, p2, nrow = 2)
+plot_grid(p1, p2, nrow = 2, labels = c("I)", "II)"))
 ```
 
-## Step 2: Linear models of log(**Mass**) in relation to **trophic level and migration behavior type**
+## Step 2a: Linear models of log(**Mass**) in relation to **trophic level, and in relation to migration behavior type**
+
+Based on the model, body mass is not significantly different between carnivores and omnivores. Body mass is significantly different between the other trophic levels (i.e., carnivore vs. herbivore, carnivore vs. scavenger, omnivore vs. herbivore, omnivore vs. scavenger)
 
 ```{r}
-# Linear models
-m1 <- lm(logMass ~ Trophic.Level, data = d)
-summary(m1) # body mass is not significantly different between carnivores and herbivores
+# "Carnivore" as reference
+m1a <- lm(logMass ~ Trophic.Level, data = d)
+summary(m1a)
 ```
 
 ```{r}
-m2 <- lm(logMass ~ Migration, data = d)
-summary(m2)
+# Relevel to make "Herbivore" the reference
+d$Trophic.Level <- relevel(d$Trophic.Level, ref = "Herbivore")
+m1b <- lm(logMass ~ Trophic.Level, data = d)
+summary(m1b)
 ```
 
-## Step 3: Perform post-hoc Tukey Honest Significant Differences test
+```{r}
+# Relevel to make "Ominivore" the reference
+d$Trophic.Level <- relevel(d$Trophic.Level, ref = "Omnivore")
+m1c <- lm(logMass ~ Trophic.Level, data = d)
+summary(m1c)
+```
+
+```{r}
+# Relevel to make "Scavenger" the reference
+d$Trophic.Level <- relevel(d$Trophic.Level, ref = "Scavenger")
+m1d <- lm(logMass ~ Trophic.Level, data = d)
+summary(m1d)
+```
+
+## Step 2b: Linear models of log(**Mass**) in relation to **migration behavior type**
+
+Based on the model, body mass is significantly different between each migration behavior type.
+
+```{r}
+# "1" as reference
+m2a <- lm(logMass ~ Migration, data = d)
+summary(m2a)
+```
+
+```{r}
+# Relevel to make "2" the reference
+d$Migration <- relevel(d$Migration, ref = "2")
+m2b <- lm(logMass ~ Migration, data = d)
+summary(m2b)
+```
+
+```{r}
+# Relevel to make "3" the reference
+d$Migration <- relevel(d$Migration, ref = "3")
+m2c <- lm(logMass ~ Migration, data = d)
+summary(m2c)
+```
+
+## Step 3: Perform post-hoc Tukey Honest Significant Differences test for migration behavior types
+
+Conducting a post-hoc Tukey HSD test reveals the same results seen in Step 2b. Body mass is significantly different between each migration behavior type.
 
 ```{r}
 m1aov <- aov(logMass ~ Migration, data = d)
@@ -65,7 +111,7 @@ m1aov <- aov(logMass ~ Migration, data = d)
 ## Step 4: Permutation
 
 ```{r}
-library(infer)
+library(infer) # for permutation
 
 original.F <- aov(logMass ~ Trophic.Level, data = d) |>
   broom::tidy() |>
@@ -76,6 +122,20 @@ permuted.F <- d |>
   hypothesize(null = "independence") |>
   generate(reps = 1000, type = "permute") |>
   calculate(stat = "F")
+
+visualize(permuted.F) + shade_p_value(obs_stat = original.F$statistic, direction = "greater")
+```
+
+```{r, warning=FALSE}
+p.value <- permuted.F |>
+    get_p_value(obs_stat = original.F$statistic, direction = "greater")
+                
+# original p-value
+paste("The original p-value is:", original.F$p.value)
+
+# p-value based on permutation
+# p = 0, but I wonder if that is due to rounding as the original p-value is very small
+paste("The p-value based on the permutation is:",p.value[["p_value"]])
 ```
 
 # Challenge 2
@@ -104,40 +164,79 @@ box2 <- ggplot(data = d, aes(x = Primary.Lifestyle, y = RelativeTarsusLength)) +
 plot_grid(box1, box2, nrow = 1, labels = c("I)", "II)"))
 ```
 
-## Step 3: Association between geographic range size and migration behavior type
+## Step 3a: Association between geographic range size and migration behavior type
 
 ```{r}
 migration <- d |> 
   drop_na(Migration) |>
   mutate(logRS = log(Range.Size))
 
-hist(migration$Range.Size)
-hist(migration$logRS)
+h1 <- ggplot(migration, aes(x = Range.Size)) +
+  geom_histogram(fill= "#bf5700")
 
-m5 <- lm(logRS ~ Migration, data = migration)
-summary(m5)
+# log transform range size
+h2 <- ggplot(migration, aes(x = logRS)) +
+  geom_histogram(fill= "#bf5700")
 
-aov <- aov(logRS ~ Migration, data = migration)
-summary(aov)
+plot_grid(h1, h2, nrow = 2, labels = c("I)", "II)"))
 ```
 
-## Step 4: Analyze Infraorder *Passeriformes* (aka songbirds)
+## Step 3b: Run models for log(Range.Size) vs. Migration
+
+The p-values (p\<0.001) indicate that there is a significant difference in the log(Range.Size) of each migration behavior type. It seems reasonable that a migratory bird would have a larger range size than a non-migratory bird.
+
+```{r}
+#  "3" as the reference
+m5a <- lm(logRS ~ Migration, data = migration)
+summary(m5a)
+```
+
+```{r}
+# Relevel to make "2" the reference
+migration$Migration <- relevel(migration$Migration, ref = "2")
+m5b <- lm(logRS ~ Migration, data = migration)
+summary(m5b)
+```
+
+```{r}
+# Relevel to make "1" the reference
+migration$Migration <- relevel(migration$Migration, ref = "1")
+m5c <- lm(logRS ~ Migration, data = migration)
+summary(m5c)
+```
+
+### Post-hoc Tukey HSD test
+
+The post-hoc Tukey HSD test also indicates that there is a significant difference in log(Range.Size) between each of the migration behavior types.
+
+```{r}
+m5aov <- aov(logRS ~ Migration, data = migration)
+(posthoc <- TukeyHSD(m5aov, which = "Migration", conf.level = 0.95))
+```
+
+## Step 4a: Analyze Infraorder *Passeriformes* (aka songbirds)
 
 ```{r}
 songbirds <- d |> filter(Order1 == "Passeriformes")
 
 box1 <- ggplot(data = songbirds, aes(x = Primary.Lifestyle, y = RelativeBeakLength)) +
   geom_boxplot() +
-  geom_jitter(alpha = 0.05) +
+  geom_jitter(color = "#bf5700", alpha = 0.1) +
   theme(axis.text.x = element_text(angle = 45, hjust=1))
 
 box2 <- ggplot(data = songbirds, aes(x = Primary.Lifestyle, y = RelativeTarsusLength)) +
   geom_boxplot() +
-  geom_jitter(alpha = 0.05) +
+  geom_jitter(color = "#bf5700", alpha = 0.1) +
   theme(axis.text.x = element_text(angle = 45, hjust=1))
 
-plot_grid(box1, box2, nrow = 1)
+plot_grid(box1, box2, nrow = 1, labels = c("I)", "II)"))
+```
 
+## Step 4b: Models
+
+The p-values (p\<0.001) indicate that there is a significant difference in relative beak length and relative tarsus length between each primary lifestyle.
+
+```{r}
 # Linear model for relative beak length vs. primary lifestyle
 m6 <- lm(RelativeBeakLength ~ Primary.Lifestyle, data = songbirds)
 summary(m6)
@@ -148,6 +247,8 @@ summary(m7)
 ```
 
 ## Step 5: Two-way model
+
+The p-values (p\<0.001) indicate that there is a significant difference in relative beak length between each primary lifestyle and trophic level.
 
 ```{r}
 # Two-way model
@@ -168,11 +269,45 @@ summary(m9)
 ## Step 7: Interaction plot
 
 ```{r}
-
+interaction.plot(x.factor = songbirds$Primary.Lifestyle, xlab = "Primary.Lifestyle", trace.factor = songbirds$Trophic.Level, trace.label = "Trophic.Level",
+    response = songbirds$RelativeBeakLength, fun = base::mean, ylab = "RelativeBeakLength")
 ```
 
-## Step 8:
+## Step 8: Checking if the data meet the primary assumptions for standard linear regression and ANOVA
+
+It looks like all of our data does not meet the primary assumptions with some relationships we looked at violating the "max/min ratio \< 2" rule of thumb.
 
 ```{r}
 
+#logRS ~ Migration
+stats1 <- d |>
+    group_by(Trophic.Level) |>
+    summarize(`mean(logMass)` = mean(logMass), `sd(logMass)` = sd(logMass))
+
+stats2 <- d |>
+    group_by(Migration) |>
+    summarize(`mean(logMass)` = mean(logMass), `sd(logMass)` = sd(logMass))
+
+stats3 <- d |>
+    group_by(Trophic.Level) |>
+    summarize(`mean(RelativeBeakLength)` = mean(RelativeBeakLength), `sd(RelativeBeakLength)` = sd(RelativeBeakLength))
+
+stats4 <- d |>
+    group_by(Primary.Lifestyle) |>
+    summarize(`mean(RelativeTarsusLength)` = mean(RelativeTarsusLength), `sd(RelativeTarsusLength)` = sd(RelativeTarsusLength))
+
+stats5 <- songbirds |>
+    group_by(Trophic.Level) |>
+    summarize(`mean(RelativeBeakLength)` = mean(RelativeBeakLength), `sd(RelativeBeakLength)` = sd(RelativeBeakLength))
+
+# check that variances are roughly equal (ratio of max/min is <2)
+paste("logMass ~ Trophic.Level:", max(stats1$`sd(logMass)`)/min(stats1$`sd(logMass)`))
+
+paste("logMass ~ Migration:", max(stats2$`sd(logMass)`)/min(stats2$`sd(logMass)`))
+
+paste("RelativeBeakLength ~ Trophic.Level:", max(stats3$`sd(RelativeBeakLength)`)/min(stats3$`sd(RelativeBeakLength)`))
+
+paste("RelativeTarsusLength ~ Primary.Lifestyle:", max(stats4$`sd(RelativeTarsusLength)`)/min(stats4$`sd(RelativeTarsusLength)`))
+
+paste("RelativeBeakLength ~ Trophic.Level (songbirds):", max(stats5$`sd(RelativeBeakLength)`)/min(stats5$`sd(RelativeBeakLength)`))
 ```
